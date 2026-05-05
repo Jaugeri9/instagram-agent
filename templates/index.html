@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Instagram Agent</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f0f0f; color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .card { background: #1a1a1a; border: 1px solid #2a2a2a; }
+    .badge-replied { background: #14532d; color: #86efac; }
+    .badge-tracked { background: #1e3a5f; color: #93c5fd; }
+    .badge-error { background: #450a0a; color: #fca5a5; }
+    .badge-pending { background: #2a2a2a; color: #a3a3a3; }
+    .toggle { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #374151; border-radius: 24px; transition: .2s; }
+    .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .2s; }
+    input:checked + .slider { background: #7c3aed; }
+    input:checked + .slider:before { transform: translateX(20px); }
+    textarea:focus, input:focus { outline: none; border-color: #7c3aed !important; }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+
+  <!-- Header -->
+  <div class="max-w-5xl mx-auto">
+    <div class="flex items-center justify-between mb-8">
+      <div>
+        <h1 class="text-2xl font-bold text-white">Instagram Agent</h1>
+        <p class="text-gray-500 text-sm mt-1">AI-powered comment replies & follower tracking</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-gray-400" id="status-label">
+          {{ "Active" if settings.active == "true" else "Paused" }}
+        </span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-active" {{ "checked" if settings.active == "true" else "" }}
+            onchange="saveSetting('active', this.checked ? 'true' : 'false')">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div class="card rounded-xl p-4">
+        <p class="text-gray-500 text-xs uppercase tracking-wide">Total Events</p>
+        <p class="text-3xl font-bold mt-1" id="stat-total">{{ stats.total }}</p>
+      </div>
+      <div class="card rounded-xl p-4">
+        <p class="text-gray-500 text-xs uppercase tracking-wide">Comments</p>
+        <p class="text-3xl font-bold mt-1" id="stat-comments">{{ stats.comments }}</p>
+      </div>
+      <div class="card rounded-xl p-4">
+        <p class="text-gray-500 text-xs uppercase tracking-wide">New Followers</p>
+        <p class="text-3xl font-bold mt-1" id="stat-follows">{{ stats.follows }}</p>
+      </div>
+      <div class="card rounded-xl p-4">
+        <p class="text-gray-500 text-xs uppercase tracking-wide">Replied</p>
+        <p class="text-3xl font-bold mt-1 text-purple-400" id="stat-replied">{{ stats.replied }}</p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+      <!-- Settings Panel -->
+      <div class="md:col-span-1">
+        <div class="card rounded-xl p-5">
+          <h2 class="font-semibold text-white mb-4">Settings</h2>
+
+          <!-- Auto-reply comments -->
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <p class="text-sm text-white">Auto-reply to comments</p>
+              <p class="text-xs text-gray-500 mt-0.5">Claude replies instantly</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-comments"
+                {{ "checked" if settings.auto_reply_comments == "true" else "" }}
+                onchange="saveSetting('auto_reply_comments', this.checked ? 'true' : 'false')">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <hr class="border-gray-800 mb-4" />
+
+          <!-- Auto-DM followers -->
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <p class="text-sm text-white">Auto-DM new followers</p>
+              <p class="text-xs text-gray-500 mt-0.5">Requires advanced API access</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-dms"
+                {{ "checked" if settings.auto_dm_followers == "true" else "" }}
+                onchange="saveSetting('auto_dm_followers', this.checked ? 'true' : 'false')">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <hr class="border-gray-800 mb-4" />
+
+          <!-- Persona -->
+          <div>
+            <p class="text-sm text-white mb-2">AI Persona</p>
+            <p class="text-xs text-gray-500 mb-2">Tell Claude how to sound</p>
+            <textarea id="persona-input" rows="6"
+              class="w-full bg-black border border-gray-700 rounded-lg p-3 text-sm text-gray-300 resize-none transition"
+              placeholder="You are a friendly assistant...">{{ settings.persona }}</textarea>
+            <button onclick="savePersona()"
+              class="mt-2 w-full bg-purple-700 hover:bg-purple-600 text-white text-sm font-medium py-2 rounded-lg transition">
+              Save Persona
+            </button>
+            <p class="text-xs text-green-400 mt-1 hidden" id="persona-saved">Saved!</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Events Feed -->
+      <div class="md:col-span-2">
+        <div class="card rounded-xl p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="font-semibold text-white">Activity Feed</h2>
+            <span class="text-xs text-gray-500" id="last-updated">Auto-refreshes every 30s</span>
+          </div>
+
+          <div id="events-list" class="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+            {% if events %}
+              {% for event in events %}
+              <div class="bg-black rounded-lg p-4 border border-gray-800">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                      {% if event.type == "comment" %}
+                        <span class="text-xs font-medium text-purple-400">💬 Comment</span>
+                      {% else %}
+                        <span class="text-xs font-medium text-blue-400">👤 Follow</span>
+                      {% endif %}
+                      <span class="text-xs text-gray-600">@{{ event.username }}</span>
+                      <span class="text-xs text-gray-700">{{ event.created_at }}</span>
+                    </div>
+                    {% if event.content %}
+                      <p class="text-sm text-gray-300 mb-2">"{{ event.content }}"</p>
+                    {% endif %}
+                    {% if event.response %}
+                      <div class="bg-purple-950 border border-purple-900 rounded-md p-2 mt-1">
+                        <p class="text-xs text-purple-300 font-medium mb-0.5">AI Reply</p>
+                        <p class="text-xs text-gray-300">{{ event.response }}</p>
+                      </div>
+                    {% endif %}
+                  </div>
+                  <span class="shrink-0 text-xs px-2 py-0.5 rounded-full font-medium
+                    {% if event.status == 'replied' %}badge-replied
+                    {% elif event.status == 'tracked' %}badge-tracked
+                    {% elif event.status == 'error' %}badge-error
+                    {% else %}badge-pending{% endif %}">
+                    {{ event.status }}
+                  </span>
+                </div>
+              </div>
+              {% endfor %}
+            {% else %}
+              <div class="text-center py-16 text-gray-600">
+                <p class="text-4xl mb-3">📭</p>
+                <p class="text-sm">No activity yet.</p>
+                <p class="text-xs mt-1">Events will appear here once your webhook is connected.</p>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <p class="text-center text-xs text-gray-700 mt-6">Powered by Claude AI &amp; Instagram Graph API</p>
+  </div>
+
+  <script>
+    async function saveSetting(key, value) {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: value })
+      });
+      if (key === 'active') {
+        document.getElementById('status-label').textContent = value === 'true' ? 'Active' : 'Paused';
+      }
+    }
+
+    async function savePersona() {
+      const value = document.getElementById('persona-input').value;
+      await saveSetting('persona', value);
+      const saved = document.getElementById('persona-saved');
+      saved.classList.remove('hidden');
+      setTimeout(() => saved.classList.add('hidden'), 2000);
+    }
+
+    async function refreshFeed() {
+      try {
+        const [eventsRes, statsRes] = await Promise.all([
+          fetch('/api/events').then(r => r.json()),
+          fetch('/api/stats').then(r => r.json())
+        ]);
+
+        document.getElementById('stat-total').textContent = statsRes.total;
+        document.getElementById('stat-comments').textContent = statsRes.comments;
+        document.getElementById('stat-follows').textContent = statsRes.follows;
+        document.getElementById('stat-replied').textContent = statsRes.replied;
+
+        const list = document.getElementById('events-list');
+        if (eventsRes.length === 0) return;
+
+        list.innerHTML = eventsRes.map(e => `
+          <div class="bg-black rounded-lg p-4 border border-gray-800">
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-xs font-medium ${e.type === 'comment' ? 'text-purple-400' : 'text-blue-400'}">
+                    ${e.type === 'comment' ? '💬 Comment' : '👤 Follow'}
+                  </span>
+                  <span class="text-xs text-gray-600">@${e.username || ''}</span>
+                  <span class="text-xs text-gray-700">${e.created_at}</span>
+                </div>
+                ${e.content ? `<p class="text-sm text-gray-300 mb-2">"${e.content}"</p>` : ''}
+                ${e.response ? `
+                  <div class="bg-purple-950 border border-purple-900 rounded-md p-2 mt-1">
+                    <p class="text-xs text-purple-300 font-medium mb-0.5">AI Reply</p>
+                    <p class="text-xs text-gray-300">${e.response}</p>
+                  </div>` : ''}
+              </div>
+              <span class="shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${badgeClass(e.status)}">
+                ${e.status}
+              </span>
+            </div>
+          </div>
+        `).join('');
+
+        document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      } catch (_) {}
+    }
+
+    function badgeClass(status) {
+      const map = { replied: 'badge-replied', tracked: 'badge-tracked', error: 'badge-error' };
+      return map[status] || 'badge-pending';
+    }
+
+    setInterval(refreshFeed, 30000);
+  </script>
+</body>
+</html>
