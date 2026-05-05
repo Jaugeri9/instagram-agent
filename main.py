@@ -33,8 +33,6 @@ def valid_signature(body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(f"sha256={expected}", signature_header)
 
 
-# ── Webhook verification (Meta calls this once when you register the webhook) ──
-
 @app.get("/webhook")
 async def verify_webhook(request: Request):
     params = dict(request.query_params)
@@ -45,8 +43,6 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(params["hub.challenge"])
     raise HTTPException(status_code=403, detail="Verification failed")
 
-
-# ── Webhook event receiver ──
 
 @app.post("/webhook")
 async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -71,8 +67,6 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     return {"status": "ok"}
 
 
-# ── Event handlers ──
-
 async def handle_comment(value: dict):
     if get_setting("active") != "true":
         return
@@ -85,7 +79,6 @@ async def handle_comment(value: dict):
     comment_id = value.get("id", "")
     media_id = value.get("media", {}).get("id", "")
 
-    # Don't reply to yourself
     if user_id == OWN_USER_ID:
         return
 
@@ -122,22 +115,17 @@ async def handle_follow(value: dict):
         update_event(event_id, None, "tracked")
 
 
-# ── Dashboard ──
-
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     events = get_events(100)
     settings = get_settings_all()
     stats = get_stats()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "events": events,
         "settings": settings,
         "stats": stats,
     })
 
-
-# ── API endpoints for dashboard ──
 
 @app.get("/api/events")
 async def api_events():
