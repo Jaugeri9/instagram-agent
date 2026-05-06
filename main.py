@@ -214,6 +214,41 @@ async def auth_callback(request: Request):
     """)
 
 
+# ── Test API call to unlock advanced access ──
+
+@app.get("/test-comments", response_class=HTMLResponse)
+async def test_comments():
+    from instagram import _token
+    token = _token()
+    ig_user_id = os.getenv("OWN_IG_USER_ID", "")
+
+    # Get media list
+    r1 = http_requests.get(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", params={
+        "access_token": token
+    })
+    d1 = r1.json()
+    if "error" in d1:
+        return HTMLResponse(f"<h2>❌ Error getting media:</h2><pre>{json.dumps(d1, indent=2)}</pre>")
+
+    media = d1.get("data", [])
+    if not media:
+        return HTMLResponse("<h2>❌ No media found on your account.</h2>")
+
+    # Get comments on first post
+    media_id = media[0]["id"]
+    r2 = http_requests.get(f"https://graph.facebook.com/v19.0/{media_id}/comments", params={
+        "access_token": token
+    })
+    d2 = r2.json()
+
+    return HTMLResponse(f"""
+    <h2>✅ Test API call successful!</h2>
+    <p>Found {len(media)} posts. Comments on first post:</p>
+    <pre>{json.dumps(d2, indent=2)}</pre>
+    <p>Now go back to Meta and wait up to 24 hours for the 'Request advanced access' button to activate.</p>
+    """)
+
+
 # ── Dashboard ──
 
 @app.get("/", response_class=HTMLResponse)
