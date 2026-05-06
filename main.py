@@ -152,7 +152,6 @@ async def auth_start():
     scope = (
         "instagram_basic,"
         "instagram_manage_comments,"
-        "instagram_business_manage_comments,"
         "instagram_manage_messages,"
         "pages_show_list,"
         "pages_read_engagement,"
@@ -230,7 +229,6 @@ async def auth_callback(request: Request):
     )
     d4b = r4b.json()
     page_sub_ok = d4b.get("success", False)
-    overall_ok = ig_sub_ok or page_sub_ok
     return HTMLResponse(f"""
     <html><body style="font-family:Arial,sans-serif;max-width:700px;margin:40px auto;padding:20px">
     <h2>Authentication Complete</h2>
@@ -240,7 +238,7 @@ async def auth_callback(request: Request):
     <p><b>IG User subscription:</b> {"SUCCESS - comments + mentions" if ig_sub_ok else "ERROR: " + json.dumps(d4a)}</p>
     <p><b>Page subscription:</b> {"SUCCESS" if page_sub_ok else "ERROR: " + json.dumps(d4b)}</p>
     <hr>
-    {"<p style='color:green'><b>Token saved successfully. Comments should now trigger the agent.</b></p>" if page_token else "<p style='color:red'><b>Something went wrong.</b></p>"}
+    <p style='color:green'><b>Token saved. Go to /debug to check full status.</b></p>
     <p><a href="/debug">Check debug status</a> | <a href="/">Dashboard</a></p>
     </body></html>
     """)
