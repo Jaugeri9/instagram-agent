@@ -2,6 +2,7 @@ import os
 import hmac
 import hashlib
 import json
+import requests as http_requests
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -114,6 +115,29 @@ async def handle_follow(value: dict):
     else:
         update_event(event_id, None, "tracked")
 
+
+# ── One-time setup: subscribe page to webhooks ──
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_subscription():
+    page_id = os.getenv("PAGE_ID", "")
+    token = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
+    if not page_id or not token:
+        return HTMLResponse("<h2>Error: PAGE_ID or INSTAGRAM_ACCESS_TOKEN not set in environment variables.</h2>")
+    url = f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps"
+    params = {
+        "subscribed_fields": "instagram_manage_comments,instagram_mentions",
+        "access_token": token
+    }
+    resp = http_requests.post(url, params=params)
+    data = resp.json()
+    if data.get("success"):
+        return HTMLResponse("<h2>✅ Success! Your page is now subscribed to webhook events. Comments on your Instagram posts will now trigger the agent.</h2>")
+    else:
+        return HTMLResponse(f"<h2>❌ Error:</h2><pre>{json.dumps(data, indent=2)}</pre>")
+
+
+# ── Dashboard ──
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
