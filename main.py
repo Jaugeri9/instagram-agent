@@ -82,7 +82,8 @@ async def handle_comment(value: dict):
     comment_id = value.get("id", "")
     media_id = value.get("media", {}).get("id", "")
 
-    if user_id == OWN_USER_ID:
+    # Temporarily disabled to allow testing with own account
+    if False and user_id == OWN_USER_ID:
         return
 
     event_id = add_event("comment", user_id, username, comment_text, media_id, comment_id)
