@@ -181,30 +181,51 @@ async def auth_callback(request: Request):
         if not page_token:
             return HTMLResponse(f"""
             <h2>❌ No page token found.</h2>
-            <p>Try <a href='/auth'>logging in again</a> — when Facebook asks which pages to connect,
-            make sure to <strong>select your page</strong> before clicking Continue.</p>
-            <pre>/me/accounts: {json.dumps(d3, indent=2)}\ndirect lookup: {json.dumps(d3b, indent=2)}</pre>
+            <p>Try <a href='/auth'>logging in again</a>.</p>
+            <pre>{json.dumps(d3, indent=2)}</pre>
             """)
 
-    r4 = http_requests.post(f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps", params={
-        "subscribed_fields": "instagram_manage_comments,instagram_mentions",
-        "access_token": page_token
+    # Subscribe Instagram Business Account to webhooks
+    ig_user_id = os.getenv("OWN_IG_USER_ID", "17841445556387920")
+    r4 = http_requests.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/subscribed_apps", params={
+        "subscribed_fields": "comments,mentions",
+        "access_token": long_token
     })
     d4 = r4.json()
 
     set_setting("access_token", page_token)
+    set_setting("long_token", long_token)
 
     return HTMLResponse(f"""
     <html><body style="font-family:sans-serif;max-width:700px;margin:40px auto;padding:20px">
     <h2>✅ All done! Your Instagram agent is fully connected.</h2>
-    <p>Webhook subscription: <strong>{d4}</strong></p>
+    <p>Instagram subscription: <strong>{d4}</strong></p>
     <hr>
-    <p>Also update <code>INSTAGRAM_ACCESS_TOKEN</code> in Railway with this permanent token so it survives restarts:</p>
+    <p>Update <code>INSTAGRAM_ACCESS_TOKEN</code> in Railway with this permanent token:</p>
     <textarea style="width:100%;height:80px;font-size:11px">{page_token}</textarea>
     <br><br>
     <a href="/" style="background:#7c3aed;color:white;padding:10px 20px;text-decoration:none;border-radius:6px">Go to Dashboard</a>
     </body></html>
     """)
+
+
+# ── Subscribe Instagram account to webhooks ──
+
+@app.get("/subscribe-ig", response_class=HTMLResponse)
+async def subscribe_ig():
+    from instagram import _token
+    token = _token()
+    long_token = get_setting("long_token") or token
+    ig_user_id = os.getenv("OWN_IG_USER_ID", "17841445556387920")
+    r = http_requests.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/subscribed_apps", params={
+        "subscribed_fields": "comments,mentions",
+        "access_token": long_token
+    })
+    data = r.json()
+    if data.get("success"):
+        return HTMLResponse("<h2>✅ Instagram account subscribed! Real comments will now trigger webhooks.</h2><p><a href='/'>Go to Dashboard</a></p>")
+    else:
+        return HTMLResponse(f"<h2>❌ Error:</h2><pre>{json.dumps(data, indent=2)}</pre>")
 
 
 # ── Privacy Policy ──
