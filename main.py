@@ -217,20 +217,29 @@ async def auth_callback(request: Request):
             f"<p><pre>{json.dumps(d3, indent=2)}</pre></p>"
         )
     set_setting("access_token", page_token)
-    # KEY FIX: subscribe the INSTAGRAM USER (not the page) to the comments field
-    r4 = http_requests.post(
+    r4a = http_requests.post(
         f"{BASE_GQL}/{IG_USER_ID}/subscribed_apps",
-        params={"subscribed_fields": "comments,mentions", "access_token": page_token}
+        params={"subscribed_fields": "comments,mentions", "access_token": long_user_token}
     )
-    d4 = r4.json()
-    sub_ok = d4.get("success", False)
+    d4a = r4a.json()
+    ig_sub_ok = d4a.get("success", False)
+    r4b = http_requests.post(
+        f"{BASE_GQL}/{PAGE_ID}/subscribed_apps",
+        params={"subscribed_fields": "instagram_manage_comments,mention,feed", "access_token": page_token}
+    )
+    d4b = r4b.json()
+    page_sub_ok = d4b.get("success", False)
+    overall_ok = ig_sub_ok or page_sub_ok
     return HTMLResponse(f"""
-    <html><body style="font-family:Arial,sans-serif;max-width:600px;margin:40px auto;padding:20px">
+    <html><body style="font-family:Arial,sans-serif;max-width:700px;margin:40px auto;padding:20px">
     <h2>Authentication Complete</h2>
     <p><b>Page:</b> {page_name}</p>
     <p><b>Token saved:</b> ...{page_token[-10:]}</p>
-    <p><b>Instagram subscription:</b> {"SUCCESS - comments + mentions active" if sub_ok else "ERROR: " + json.dumps(d4)}</p>
-    <br>
+    <hr>
+    <p><b>IG User subscription:</b> {"SUCCESS - comments + mentions" if ig_sub_ok else "ERROR: " + json.dumps(d4a)}</p>
+    <p><b>Page subscription:</b> {"SUCCESS - instagram_manage_comments" if page_sub_ok else "ERROR: " + json.dumps(d4b)}</p>
+    <hr>
+    {"<p style='color:green'><b>At least one subscription succeeded. Comments should now trigger the agent.</b></p>" if overall_ok else "<p style='color:red'><b>Both subscriptions failed. See steps below.</b></p>"}
     <p><a href="/debug">Check debug status</a> | <a href="/">Dashboard</a></p>
     </body></html>
     """)
@@ -241,29 +250,31 @@ async def subscribe_ig():
     token = get_token()
     if not token:
         return HTMLResponse("<h2>No token. Please visit <a href='/auth'>/auth</a> first.</h2>")
-    # KEY: subscribe the INSTAGRAM USER ID, not the page ID
-    resp = http_requests.post(
+    long_tok = get_setting("long_token") or ""
+    token_for_ig = long_tok if long_tok else token
+    r1 = http_requests.post(
         f"{BASE_GQL}/{IG_USER_ID}/subscribed_apps",
-        params={"subscribed_fields": "comments,mentions", "access_token": token}
+        params={"subscribed_fields": "comments,mentions", "access_token": token_for_ig}
     )
-    data = resp.json()
-    if data.get("success"):
-        return HTMLResponse("""
-        <html><body style="font-family:Arial,sans-serif;max-width:600px;margin:40px auto;padding:20px">
-        <h2>Instagram account subscribed!</h2>
-        <p>Fields: comments, mentions</p>
-        <p>Real Instagram comments will now trigger the agent.</p>
-        <p><a href="/debug">Verify in debug</a> | <a href="/">Dashboard</a></p>
-        </body></html>
-        """)
-    else:
-        return HTMLResponse(f"""
-        <html><body style="font-family:Arial,sans-serif;max-width:600px;margin:40px auto;padding:20px">
-        <h2>Subscription error</h2>
-        <pre>{json.dumps(data, indent=2)}</pre>
-        <p>If permissions error: <a href='/auth'>re-authenticate</a></p>
-        </body></html>
-        """)
+    d1 = r1.json()
+    ig_ok = d1.get("success", False)
+    r2 = http_requests.post(
+        f"{BASE_GQL}/{PAGE_ID}/subscribed_apps",
+        params={"subscribed_fields": "instagram_manage_comments,mention,feed", "access_token": token}
+    )
+    d2 = r2.json()
+    page_ok = d2.get("success", False)
+    overall_ok = ig_ok or page_ok
+    return HTMLResponse(f"""
+    <html><body style="font-family:Arial,sans-serif;max-width:600px;margin:40px auto;padding:20px">
+    <h2>Subscription Results</h2>
+    <p><b>IG User ({IG_USER_ID}):</b> {"SUCCESS" if ig_ok else "ERROR: " + json.dumps(d1)}</p>
+    <p><b>Page ({PAGE_ID}):</b> {"SUCCESS" if page_ok else "ERROR: " + json.dumps(d2)}</p>
+    <hr>
+    {"<p style='color:green'><b>At least one succeeded. Comments should now trigger the agent.</b></p>" if overall_ok else "<p style='color:red'><b>Both failed. Add the Instagram product in your Meta app dashboard.</b></p>"}
+    <p><a href="/debug">Debug status</a> | <a href="/">Dashboard</a></p>
+    </body></html>
+    """)
 
 
 @app.get("/debug")
@@ -273,12 +284,20 @@ async def debug():
     env_token = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
     me        = http_requests.get(f"{BASE_GQL}/me", params={"fields": "id,name", "access_token": token}).json()
     ig_sub    = http_requests.get(f"{BASE_GQL}/{IG_USER_ID}/subscribed_apps", params={"access_token": token}).json()
-    page_sub  = http_requests.get(f"{BASE_GQL}/{PAGE_ID}/subscribed_apps",    params={"access_token": token}).json()
+    page_sub  = http_requests.get(f"{BASE_GQL}/{PAGE_ID}/subscribed_apps", params={"access_token": token}).json()
+    tok_debug = http_requests.get(f"{BASE_GQL}/debug_token", params={
+        "input_token": token,
+        "access_token": f"{APP_ID}|{os.getenv('META_APP_SECRET', '')}",
+    }).json()
+    tok_preview = f"...{token[-15:]}" if token else "MISSING"
     ig_fields = []
     for item in ig_sub.get("data", []):
         ig_fields.extend(item.get("subscribed_fields", []))
     comments_ok = "comments" in ig_fields
-    tok_preview = f"...{token[-15:]}" if token else "MISSING"
+    page_fields = []
+    for item in page_sub.get("data", []):
+        page_fields.extend(item.get("subscribed_fields", []))
+    ig_comments_via_page = "instagram_manage_comments" in page_fields
     return HTMLResponse(f"""
     <html><body style="font-family:monospace;padding:20px;max-width:900px;margin:auto">
     <h2>Debug Status</h2>
@@ -289,10 +308,13 @@ async def debug():
     <h3>/me</h3>
     <pre>{json.dumps(me, indent=2)}</pre>
     <h3>Instagram User Subscription (IG ID: {IG_USER_ID})</h3>
-    <p><b>Comments field active: {"YES - webhooks will fire" if comments_ok else "NO - run /subscribe-ig"}</b></p>
+    <p><b>Comments via IG user: {"YES" if comments_ok else "NO"}</b></p>
     <pre>{json.dumps(ig_sub, indent=2)}</pre>
     <h3>Page Subscription (Page ID: {PAGE_ID})</h3>
+    <p><b>instagram_manage_comments via page: {"YES" if ig_comments_via_page else "NO"}</b></p>
     <pre>{json.dumps(page_sub, indent=2)}</pre>
+    <h3>Token Scopes</h3>
+    <pre>{json.dumps(tok_debug, indent=2)}</pre>
     <hr>
     <p><a href="/auth">Re-authenticate</a> | <a href="/subscribe-ig">Subscribe IG</a> | <a href="/">Dashboard</a></p>
     </body></html>
@@ -309,8 +331,8 @@ async def privacy():
     <ul><li>Instagram usernames and user IDs of commenters</li>
     <li>Comment text</li><li>Post IDs and captions</li></ul>
     <h2>How Data Is Used</h2>
-    <p>Data is used only to generate replies. It is never sold or shared except with
-    Anthropic (AI generation) and Meta (sending replies).</p>
+    <p>Data is used only to generate replies. Never sold or shared except with
+    Anthropic (AI) and Meta (sending replies).</p>
     <h2>Contact</h2><p>Contact the account owner via Instagram.</p>
     </body></html>
     """)
