@@ -19,7 +19,8 @@ templates = Jinja2Templates(directory="templates")
 
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "")
 APP_SECRET = os.getenv("META_APP_SECRET", "")
-OWN_USER_ID = os.getenv("OWN_IG_USER_ID", "")
+OWN_USER_ID = os.getenv("OWN_IG_USER_ID", "17841445556387920")
+PAGE_ID = os.getenv("PAGE_ID", "113420497129209")
 APP_ID = "4306924772888428"
 CALLBACK_URL = "https://instagram-agent-production-4998.up.railway.app/callback"
 
@@ -36,6 +37,16 @@ def valid_signature(body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(f"sha256={expected}", signature_header)
 
 
+def get_token() -> str:
+    """Get best available token: database first, then env var."""
+    db_token = get_setting("access_token")
+    if db_token:
+        return db_token
+    return os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
+
+
+# ── Webhook verification ──
+
 @app.get("/webhook")
 async def verify_webhook(request: Request):
     params = dict(request.query_params)
@@ -47,6 +58,8 @@ async def verify_webhook(request: Request):
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
+# ── Webhook event receiver ──
+
 @app.post("/webhook")
 async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.body()
@@ -55,7 +68,10 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     if not valid_signature(body, signature):
         raise HTTPException(status_code=403, detail="Bad signature")
 
-    data = json.loads(body)
+    try:
+        data = json.loads(body)
+    except Exception:
+        return {"status": "ok"}
 
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
@@ -64,11 +80,15 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
 
             if field == "comments":
                 background_tasks.add_task(handle_comment, value)
+            elif field == "mentions":
+                background_tasks.add_task(handle_comment, value)
             elif field == "follows":
                 background_tasks.add_task(handle_follow, value)
 
     return {"status": "ok"}
 
+
+# ── Event handlers ──
 
 async def handle_comment(value: dict):
     if get_setting("active") != "true":
@@ -82,6 +102,7 @@ async def handle_comment(value: dict):
     comment_id = value.get("id", "")
     media_id = value.get("media", {}).get("id", "")
 
+    # Disabled during testing — re-enable later to stop bot replying to itself
     if False and user_id == OWN_USER_ID:
         return
 
@@ -136,8 +157,8 @@ async def auth_callback(request: Request):
         return HTMLResponse(f"<h2>❌ Auth failed: {request.query_params.get('error_description', 'Unknown error')}</h2><p><a href='/auth'>Try again</a></p>")
 
     app_secret = os.getenv("META_APP_SECRET", "")
-    page_id = os.getenv("PAGE_ID", "")
 
+    # Step 1: Exchange code for short-lived token
     r1 = http_requests.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
         "client_id": APP_ID,
         "client_secret": app_secret,
@@ -149,6 +170,7 @@ async def auth_callback(request: Request):
         return HTMLResponse(f"<h2>❌ Step 1 failed:</h2><pre>{json.dumps(d1, indent=2)}</pre>")
     short_token = d1["access_token"]
 
+    # Step 2: Exchange for long-lived token (60 days)
     r2 = http_requests.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
         "grant_type": "fb_exchange_token",
         "client_id": APP_ID,
@@ -160,7 +182,9 @@ async def auth_callback(request: Request):
         return HTMLResponse(f"<h2>❌ Step 2 failed:</h2><pre>{json.dumps(d2, indent=2)}</pre>")
     long_token = d2["access_token"]
 
+    # Step 3: Get page access token
     page_token = None
+    page_id = PAGE_ID
     r3 = http_requests.get("https://graph.facebook.com/v19.0/me/accounts", params={"access_token": long_token})
     d3 = r3.json()
     for page in d3.get("data", []):
@@ -181,27 +205,27 @@ async def auth_callback(request: Request):
         if not page_token:
             return HTMLResponse(f"""
             <h2>❌ No page token found.</h2>
-            <p>Try <a href='/auth'>logging in again</a>.</p>
+            <p>Try <a href='/auth'>logging in again</a> and make sure to select your page.</p>
             <pre>{json.dumps(d3, indent=2)}</pre>
             """)
 
-    # Subscribe Instagram Business Account to webhooks
-    ig_user_id = os.getenv("OWN_IG_USER_ID", "17841445556387920")
-    r4 = http_requests.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/subscribed_apps", params={
-        "subscribed_fields": "comments,mentions",
-        "access_token": long_token
+    # Step 4: Subscribe page to webhooks with correct valid fields
+    r4 = http_requests.post(f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps", params={
+        "subscribed_fields": "mention,feed",
+        "access_token": page_token
     })
     d4 = r4.json()
 
+    # Step 5: Save tokens to database
     set_setting("access_token", page_token)
     set_setting("long_token", long_token)
 
     return HTMLResponse(f"""
     <html><body style="font-family:sans-serif;max-width:700px;margin:40px auto;padding:20px">
     <h2>✅ All done! Your Instagram agent is fully connected.</h2>
-    <p>Instagram subscription: <strong>{d4}</strong></p>
+    <p>Page subscription result: <strong>{d4}</strong></p>
     <hr>
-    <p>Update <code>INSTAGRAM_ACCESS_TOKEN</code> in Railway with this permanent token:</p>
+    <p><strong>Important:</strong> Copy this permanent token and update <code>INSTAGRAM_ACCESS_TOKEN</code> in Railway so it survives restarts:</p>
     <textarea style="width:100%;height:80px;font-size:11px">{page_token}</textarea>
     <br><br>
     <a href="/" style="background:#7c3aed;color:white;padding:10px 20px;text-decoration:none;border-radius:6px">Go to Dashboard</a>
@@ -209,23 +233,56 @@ async def auth_callback(request: Request):
     """)
 
 
-# ── Subscribe Instagram account to webhooks ──
+# ── Subscribe page to webhooks (run this if /auth subscription failed) ──
 
 @app.get("/subscribe-ig", response_class=HTMLResponse)
 async def subscribe_ig():
-    from instagram import _token
-    token = _token()
-    long_token = get_setting("long_token") or token
-    ig_user_id = os.getenv("OWN_IG_USER_ID", "17841445556387920")
-    r = http_requests.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/subscribed_apps", params={
-        "subscribed_fields": "comments,mentions",
-        "access_token": long_token
+    token = get_token()
+    page_id = PAGE_ID
+
+    r = http_requests.post(f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps", params={
+        "subscribed_fields": "mention,feed",
+        "access_token": token
     })
     data = r.json()
     if data.get("success"):
-        return HTMLResponse("<h2>✅ Instagram account subscribed! Real comments will now trigger webhooks.</h2><p><a href='/'>Go to Dashboard</a></p>")
+        return HTMLResponse("<h2>✅ Page subscribed! Real comments should now trigger webhooks.</h2><p><a href='/'>Go to Dashboard</a></p>")
     else:
         return HTMLResponse(f"<h2>❌ Error:</h2><pre>{json.dumps(data, indent=2)}</pre>")
+
+
+# ── Debug endpoint — check current token and subscription state ──
+
+@app.get("/debug", response_class=HTMLResponse)
+async def debug():
+    token = get_token()
+    token_preview = token[:20] + "..." if token else "None"
+
+    # Check page subscription
+    r1 = http_requests.get(f"https://graph.facebook.com/v19.0/{PAGE_ID}/subscribed_apps", params={
+        "access_token": token
+    })
+    page_sub = r1.json()
+
+    # Check token info
+    r2 = http_requests.get("https://graph.facebook.com/v19.0/me", params={
+        "access_token": token
+    })
+    me = r2.json()
+
+    return HTMLResponse(f"""
+    <html><body style="font-family:sans-serif;max-width:800px;margin:40px auto;padding:20px">
+    <h2>🔍 Debug Info</h2>
+    <h3>Token</h3>
+    <p>{token_preview}</p>
+    <h3>/me</h3>
+    <pre>{json.dumps(me, indent=2)}</pre>
+    <h3>Page Subscription ({PAGE_ID})</h3>
+    <pre>{json.dumps(page_sub, indent=2)}</pre>
+    <br>
+    <a href="/subscribe-ig">Run /subscribe-ig</a> | <a href="/auth">Re-authenticate</a> | <a href="/">Dashboard</a>
+    </body></html>
+    """)
 
 
 # ── Privacy Policy ──
@@ -236,8 +293,8 @@ async def privacy():
     <html><body style="font-family:sans-serif;max-width:700px;margin:40px auto;padding:20px">
     <h1>Privacy Policy</h1>
     <p>Last updated: May 2026</p>
-    <p>This app (My Social Agent) automates Instagram comment replies and follower tracking for the account owner only.
-    It does not collect, store, or share any personal data from third parties.</p>
+    <p>This app (My Social Agent) automates Instagram comment replies and follower tracking
+    for the account owner only. It does not collect, store, or share any personal data from third parties.</p>
     <h2>Data We Access</h2>
     <p>We access Instagram comment data solely to generate automated replies on behalf of the account owner.</p>
     <h2>Data Storage</h2>
