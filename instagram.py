@@ -8,6 +8,10 @@ BASE_URL = "https://graph.facebook.com/v19.0"
 
 
 def _token() -> str:
+    from database import get_setting
+    db_token = get_setting("access_token")
+    if db_token:
+        return db_token
     return os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
 
 
@@ -18,7 +22,6 @@ def reply_to_comment(comment_id: str, message: str) -> bool:
 
 
 def send_dm(user_id: str, message: str) -> bool:
-    """Send an Instagram Direct message. Requires instagram_manage_messages permission."""
     page_id = os.getenv("PAGE_ID", "")
     url = f"{BASE_URL}/{page_id}/messages"
     resp = requests.post(url, json={
@@ -41,7 +44,6 @@ def get_media_caption(media_id: str) -> str:
 
 
 def get_ig_user_id() -> str:
-    """Returns the Instagram Business Account ID linked to the page."""
     page_id = os.getenv("PAGE_ID", "")
     url = f"{BASE_URL}/{page_id}"
     resp = requests.get(url, params={
