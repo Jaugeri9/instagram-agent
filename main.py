@@ -4,7 +4,7 @@ import hashlib
 import json
 import requests as http_requests
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
-from fastapi.responses import PlainTextResponse, HTMLResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
@@ -20,6 +20,8 @@ templates = Jinja2Templates(directory="templates")
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "")
 APP_SECRET = os.getenv("META_APP_SECRET", "")
 OWN_USER_ID = os.getenv("OWN_IG_USER_ID", "")
+APP_ID = "4306924772888428"
+CALLBACK_URL = "https://instagram-agent-production-4998.up.railway.app/callback"
 
 
 @app.on_event("startup")
@@ -116,25 +118,89 @@ async def handle_follow(value: dict):
         update_event(event_id, None, "tracked")
 
 
-# ── One-time setup: subscribe page to webhooks ──
+# ── OAuth login flow ──
 
-@app.get("/setup", response_class=HTMLResponse)
-async def setup_subscription():
+@app.get("/auth")
+async def auth_start():
+    scope = "instagram_basic,instagram_manage_comments,pages_show_list,pages_read_engagement,pages_manage_metadata"
+    url = f"https://www.facebook.com/dialog/oauth?client_id={APP_ID}&redirect_uri={CALLBACK_URL}&scope={scope}&response_type=code"
+    return RedirectResponse(url)
+
+
+@app.get("/callback")
+async def auth_callback(request: Request):
+    code = request.query_params.get("code")
+    error = request.query_params.get("error")
+
+    if error or not code:
+        return HTMLResponse(f"<h2>❌ Auth failed: {request.query_params.get('error_description', 'Unknown error')}</h2><p><a href='/auth'>Try again</a></p>")
+
+    app_secret = os.getenv("META_APP_SECRET", "")
     page_id = os.getenv("PAGE_ID", "")
-    token = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
-    if not page_id or not token:
-        return HTMLResponse("<h2>Error: PAGE_ID or INSTAGRAM_ACCESS_TOKEN not set in environment variables.</h2>")
-    url = f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps"
-    params = {
+
+    # Step 1: Exchange code for short-lived token
+    r1 = http_requests.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+        "client_id": APP_ID,
+        "client_secret": app_secret,
+        "redirect_uri": CALLBACK_URL,
+        "code": code
+    })
+    d1 = r1.json()
+    if "error" in d1:
+        return HTMLResponse(f"<h2>❌ Step 1 failed:</h2><pre>{json.dumps(d1, indent=2)}</pre>")
+    short_token = d1["access_token"]
+
+    # Step 2: Exchange for long-lived token (60 days)
+    r2 = http_requests.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+        "grant_type": "fb_exchange_token",
+        "client_id": APP_ID,
+        "client_secret": app_secret,
+        "fb_exchange_token": short_token
+    })
+    d2 = r2.json()
+    if "error" in d2:
+        return HTMLResponse(f"<h2>❌ Step 2 failed:</h2><pre>{json.dumps(d2, indent=2)}</pre>")
+    long_token = d2["access_token"]
+
+    # Step 3: Get page access token (permanent when from long-lived token)
+    r3 = http_requests.get("https://graph.facebook.com/v19.0/me/accounts", params={"access_token": long_token})
+    d3 = r3.json()
+    if "error" in d3:
+        return HTMLResponse(f"<h2>❌ Step 3 failed:</h2><pre>{json.dumps(d3, indent=2)}</pre>")
+
+    page_token = None
+    for page in d3.get("data", []):
+        if page.get("id") == page_id:
+            page_token = page.get("access_token")
+            break
+    if not page_token and d3.get("data"):
+        page_token = d3["data"][0]["access_token"]
+        page_id = d3["data"][0]["id"]
+
+    if not page_token:
+        return HTMLResponse(f"<h2>❌ No page token found.</h2><pre>{json.dumps(d3, indent=2)}</pre>")
+
+    # Step 4: Subscribe page to webhooks
+    r4 = http_requests.post(f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps", params={
         "subscribed_fields": "instagram_manage_comments,instagram_mentions",
-        "access_token": token
-    }
-    resp = http_requests.post(url, params=params)
-    data = resp.json()
-    if data.get("success"):
-        return HTMLResponse("<h2>✅ Success! Your page is now subscribed to webhook events. Comments on your Instagram posts will now trigger the agent.</h2>")
-    else:
-        return HTMLResponse(f"<h2>❌ Error:</h2><pre>{json.dumps(data, indent=2)}</pre>")
+        "access_token": page_token
+    })
+    d4 = r4.json()
+
+    # Step 5: Save token to database so it's used immediately
+    set_setting("access_token", page_token)
+
+    return HTMLResponse(f"""
+    <html><body style="font-family:sans-serif;max-width:700px;margin:40px auto;padding:20px">
+    <h2>✅ All done! Your Instagram agent is fully connected.</h2>
+    <p>Webhook subscription: <strong>{d4}</strong></p>
+    <hr>
+    <p>Also update <code>INSTAGRAM_ACCESS_TOKEN</code> in Railway with this permanent token so it survives restarts:</p>
+    <textarea style="width:100%;height:80px;font-size:11px">{page_token}</textarea>
+    <br><br>
+    <a href="/" style="background:#7c3aed;color:white;padding:10px 20px;text-decoration:none;border-radius:6px">Go to Dashboard</a>
+    </body></html>
+    """)
 
 
 # ── Dashboard ──
