@@ -162,13 +162,10 @@ async def auth_callback(request: Request):
         return HTMLResponse(f"<h2>❌ Step 2 failed:</h2><pre>{json.dumps(d2, indent=2)}</pre>")
     long_token = d2["access_token"]
 
-    # Step 3: Get page access token (permanent when from long-lived token)
+    # Step 3: Try /me/accounts first, then direct page lookup
+    page_token = None
     r3 = http_requests.get("https://graph.facebook.com/v19.0/me/accounts", params={"access_token": long_token})
     d3 = r3.json()
-    if "error" in d3:
-        return HTMLResponse(f"<h2>❌ Step 3 failed:</h2><pre>{json.dumps(d3, indent=2)}</pre>")
-
-    page_token = None
     for page in d3.get("data", []):
         if page.get("id") == page_id:
             page_token = page.get("access_token")
@@ -177,8 +174,21 @@ async def auth_callback(request: Request):
         page_token = d3["data"][0]["access_token"]
         page_id = d3["data"][0]["id"]
 
+    # Fallback: request page token directly
     if not page_token:
-        return HTMLResponse(f"<h2>❌ No page token found.</h2><pre>{json.dumps(d3, indent=2)}</pre>")
+        r3b = http_requests.get(f"https://graph.facebook.com/v19.0/{page_id}", params={
+            "fields": "access_token",
+            "access_token": long_token
+        })
+        d3b = r3b.json()
+        page_token = d3b.get("access_token")
+        if not page_token:
+            return HTMLResponse(f"""
+            <h2>❌ No page token found.</h2>
+            <p>Try <a href='/auth'>logging in again</a> — when Facebook asks which pages to connect,
+            make sure to <strong>select your page</strong> before clicking Continue.</p>
+            <pre>/me/accounts: {json.dumps(d3, indent=2)}\ndirect lookup: {json.dumps(d3b, indent=2)}</pre>
+            """)
 
     # Step 4: Subscribe page to webhooks
     r4 = http_requests.post(f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps", params={
@@ -187,7 +197,7 @@ async def auth_callback(request: Request):
     })
     d4 = r4.json()
 
-    # Step 5: Save token to database so it's used immediately
+    # Step 5: Save token to database
     set_setting("access_token", page_token)
 
     return HTMLResponse(f"""
