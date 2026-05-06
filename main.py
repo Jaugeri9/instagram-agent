@@ -82,7 +82,6 @@ async def handle_comment(value: dict):
     comment_id = value.get("id", "")
     media_id = value.get("media", {}).get("id", "")
 
-    # Temporarily disabled to allow testing with own account
     if False and user_id == OWN_USER_ID:
         return
 
@@ -139,7 +138,6 @@ async def auth_callback(request: Request):
     app_secret = os.getenv("META_APP_SECRET", "")
     page_id = os.getenv("PAGE_ID", "")
 
-    # Step 1: Exchange code for short-lived token
     r1 = http_requests.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
         "client_id": APP_ID,
         "client_secret": app_secret,
@@ -151,7 +149,6 @@ async def auth_callback(request: Request):
         return HTMLResponse(f"<h2>❌ Step 1 failed:</h2><pre>{json.dumps(d1, indent=2)}</pre>")
     short_token = d1["access_token"]
 
-    # Step 2: Exchange for long-lived token (60 days)
     r2 = http_requests.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
         "grant_type": "fb_exchange_token",
         "client_id": APP_ID,
@@ -163,7 +160,6 @@ async def auth_callback(request: Request):
         return HTMLResponse(f"<h2>❌ Step 2 failed:</h2><pre>{json.dumps(d2, indent=2)}</pre>")
     long_token = d2["access_token"]
 
-    # Step 3: Try /me/accounts first, then direct page lookup
     page_token = None
     r3 = http_requests.get("https://graph.facebook.com/v19.0/me/accounts", params={"access_token": long_token})
     d3 = r3.json()
@@ -175,7 +171,6 @@ async def auth_callback(request: Request):
         page_token = d3["data"][0]["access_token"]
         page_id = d3["data"][0]["id"]
 
-    # Fallback: request page token directly
     if not page_token:
         r3b = http_requests.get(f"https://graph.facebook.com/v19.0/{page_id}", params={
             "fields": "access_token",
@@ -191,14 +186,12 @@ async def auth_callback(request: Request):
             <pre>/me/accounts: {json.dumps(d3, indent=2)}\ndirect lookup: {json.dumps(d3b, indent=2)}</pre>
             """)
 
-    # Step 4: Subscribe page to webhooks
     r4 = http_requests.post(f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps", params={
         "subscribed_fields": "instagram_manage_comments,instagram_mentions",
         "access_token": page_token
     })
     d4 = r4.json()
 
-    # Step 5: Save token to database
     set_setting("access_token", page_token)
 
     return HTMLResponse(f"""
@@ -214,38 +207,23 @@ async def auth_callback(request: Request):
     """)
 
 
-# ── Test API call to unlock advanced access ──
+# ── Privacy Policy ──
 
-@app.get("/test-comments", response_class=HTMLResponse)
-async def test_comments():
-    from instagram import _token
-    token = _token()
-    ig_user_id = os.getenv("OWN_IG_USER_ID", "")
-
-    # Get media list
-    r1 = http_requests.get(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", params={
-        "access_token": token
-    })
-    d1 = r1.json()
-    if "error" in d1:
-        return HTMLResponse(f"<h2>❌ Error getting media:</h2><pre>{json.dumps(d1, indent=2)}</pre>")
-
-    media = d1.get("data", [])
-    if not media:
-        return HTMLResponse("<h2>❌ No media found on your account.</h2>")
-
-    # Get comments on first post
-    media_id = media[0]["id"]
-    r2 = http_requests.get(f"https://graph.facebook.com/v19.0/{media_id}/comments", params={
-        "access_token": token
-    })
-    d2 = r2.json()
-
-    return HTMLResponse(f"""
-    <h2>✅ Test API call successful!</h2>
-    <p>Found {len(media)} posts. Comments on first post:</p>
-    <pre>{json.dumps(d2, indent=2)}</pre>
-    <p>Now go back to Meta and wait up to 24 hours for the 'Request advanced access' button to activate.</p>
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy():
+    return HTMLResponse("""
+    <html><body style="font-family:sans-serif;max-width:700px;margin:40px auto;padding:20px">
+    <h1>Privacy Policy</h1>
+    <p>Last updated: May 2026</p>
+    <p>This app (My Social Agent) automates Instagram comment replies and follower tracking for the account owner only.
+    It does not collect, store, or share any personal data from third parties.</p>
+    <h2>Data We Access</h2>
+    <p>We access Instagram comment data solely to generate automated replies on behalf of the account owner.</p>
+    <h2>Data Storage</h2>
+    <p>Comment activity is logged locally for the account owner's review only and is never shared or sold.</p>
+    <h2>Contact</h2>
+    <p>For questions, contact the account owner directly via Instagram.</p>
+    </body></html>
     """)
 
 
