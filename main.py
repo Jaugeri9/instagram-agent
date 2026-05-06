@@ -152,6 +152,7 @@ async def auth_start():
     scope = (
         "instagram_basic,"
         "instagram_manage_comments,"
+        "instagram_business_manage_comments,"
         "instagram_manage_messages,"
         "pages_show_list,"
         "pages_read_engagement,"
@@ -225,7 +226,7 @@ async def auth_callback(request: Request):
     ig_sub_ok = d4a.get("success", False)
     r4b = http_requests.post(
         f"{BASE_GQL}/{PAGE_ID}/subscribed_apps",
-        params={"subscribed_fields": "instagram_manage_comments,mention,feed", "access_token": page_token}
+        params={"subscribed_fields": "mention,feed", "access_token": page_token}
     )
     d4b = r4b.json()
     page_sub_ok = d4b.get("success", False)
@@ -237,9 +238,9 @@ async def auth_callback(request: Request):
     <p><b>Token saved:</b> ...{page_token[-10:]}</p>
     <hr>
     <p><b>IG User subscription:</b> {"SUCCESS - comments + mentions" if ig_sub_ok else "ERROR: " + json.dumps(d4a)}</p>
-    <p><b>Page subscription:</b> {"SUCCESS - instagram_manage_comments" if page_sub_ok else "ERROR: " + json.dumps(d4b)}</p>
+    <p><b>Page subscription:</b> {"SUCCESS" if page_sub_ok else "ERROR: " + json.dumps(d4b)}</p>
     <hr>
-    {"<p style='color:green'><b>At least one subscription succeeded. Comments should now trigger the agent.</b></p>" if overall_ok else "<p style='color:red'><b>Both subscriptions failed. See steps below.</b></p>"}
+    {"<p style='color:green'><b>Token saved successfully. Comments should now trigger the agent.</b></p>" if page_token else "<p style='color:red'><b>Something went wrong.</b></p>"}
     <p><a href="/debug">Check debug status</a> | <a href="/">Dashboard</a></p>
     </body></html>
     """)
@@ -260,18 +261,15 @@ async def subscribe_ig():
     ig_ok = d1.get("success", False)
     r2 = http_requests.post(
         f"{BASE_GQL}/{PAGE_ID}/subscribed_apps",
-        params={"subscribed_fields": "instagram_manage_comments,mention,feed", "access_token": token}
+        params={"subscribed_fields": "mention,feed", "access_token": token}
     )
     d2 = r2.json()
     page_ok = d2.get("success", False)
-    overall_ok = ig_ok or page_ok
     return HTMLResponse(f"""
     <html><body style="font-family:Arial,sans-serif;max-width:600px;margin:40px auto;padding:20px">
     <h2>Subscription Results</h2>
     <p><b>IG User ({IG_USER_ID}):</b> {"SUCCESS" if ig_ok else "ERROR: " + json.dumps(d1)}</p>
     <p><b>Page ({PAGE_ID}):</b> {"SUCCESS" if page_ok else "ERROR: " + json.dumps(d2)}</p>
-    <hr>
-    {"<p style='color:green'><b>At least one succeeded. Comments should now trigger the agent.</b></p>" if overall_ok else "<p style='color:red'><b>Both failed. Add the Instagram product in your Meta app dashboard.</b></p>"}
     <p><a href="/debug">Debug status</a> | <a href="/">Dashboard</a></p>
     </body></html>
     """)
@@ -294,10 +292,6 @@ async def debug():
     for item in ig_sub.get("data", []):
         ig_fields.extend(item.get("subscribed_fields", []))
     comments_ok = "comments" in ig_fields
-    page_fields = []
-    for item in page_sub.get("data", []):
-        page_fields.extend(item.get("subscribed_fields", []))
-    ig_comments_via_page = "instagram_manage_comments" in page_fields
     return HTMLResponse(f"""
     <html><body style="font-family:monospace;padding:20px;max-width:900px;margin:auto">
     <h2>Debug Status</h2>
@@ -308,10 +302,9 @@ async def debug():
     <h3>/me</h3>
     <pre>{json.dumps(me, indent=2)}</pre>
     <h3>Instagram User Subscription (IG ID: {IG_USER_ID})</h3>
-    <p><b>Comments via IG user: {"YES" if comments_ok else "NO"}</b></p>
+    <p><b>Comments active: {"YES" if comments_ok else "NO"}</b></p>
     <pre>{json.dumps(ig_sub, indent=2)}</pre>
     <h3>Page Subscription (Page ID: {PAGE_ID})</h3>
-    <p><b>instagram_manage_comments via page: {"YES" if ig_comments_via_page else "NO"}</b></p>
     <pre>{json.dumps(page_sub, indent=2)}</pre>
     <h3>Token Scopes</h3>
     <pre>{json.dumps(tok_debug, indent=2)}</pre>
